@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"DiskFlow default capabilities","local":true,"windows":["main"],"permissions":["core:default","fs:default","shell:default","dialog:default","os:default"]}}

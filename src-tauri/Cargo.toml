@@ -1,0 +1,31 @@
+[package]
+name = "diskflow"
+version = "1.0.0"
+description = "Disk space analyzer and data migration tool"
+authors = ["DiskFlow"]
+edition = "2021"
+
+[lib]
+name = "diskflow_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-fs = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-shell = "2.0"
+tauri-plugin-os = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.31"
+jwalk = "0.8"
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+rayon = "1.10"
+base64 = "0.22"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
