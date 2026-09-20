@@ -1027,6 +1027,19 @@ pub async fn scan_external_apps(dir: String) -> Result<Vec<AppItem>, String> {
     Ok(result.map_err(|e| e.to_string())?)
 }
 
+/// Lightweight refresh of which `.app` bundles are currently running.
+/// Returns the set of canonical bundle paths; the UI matches them against
+/// either the local `path` or the migrated `symlink_target` (whichever is
+/// non-empty). Cheap to call repeatedly; the heavy `lsof -nP` is cached
+/// for 3 seconds inside `detect_running_apps`.
+#[tauri::command]
+pub async fn get_running_apps() -> Result<Vec<String>, String> {
+    let result = tokio::task::spawn_blocking(|| {
+        detect_running_apps().into_iter().collect()
+    }).await;
+    Ok(result.map_err(|e| e.to_string())?)
+}
+
 /// Compute size of a single path. Tries `du -sk -L` (follow symlinks) first so
 /// migrated apps report the size of their external copy. Falls back to
 /// `du -sk` (don't follow) when the target is unreadable (e.g. system symlinks

@@ -123,6 +123,7 @@ export const api = {
   cleanPath: (path: string): Promise<boolean> => invoke('clean_path', { path }),
   scanApps: (): Promise<AppItem[]> => invoke('scan_apps'),
   scanExternalApps: (dir: string): Promise<AppItem[]> => invoke('scan_external_apps', { dir }),
+  getRunningApps: (): Promise<string[]> => invoke('get_running_apps'),
   computeAppSizes: (paths: string[], targets?: string[]): Promise<boolean> => invoke('compute_app_sizes', { paths, targets }),
   getAppIcon: (appPath: string): Promise<string> => invoke('get_app_icon', { appPath }),
 }

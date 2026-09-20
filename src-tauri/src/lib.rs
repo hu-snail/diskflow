@@ -24,6 +24,7 @@ pub fn run() {
             migrate::browse_directory,
             migrate::scan_apps,
             migrate::scan_external_apps,
+            migrate::get_running_apps,
             migrate::compute_app_sizes,
             migrate::get_app_icon,
             system::get_system_info,

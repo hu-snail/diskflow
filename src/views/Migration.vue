@@ -606,25 +606,20 @@ onMounted(async () => {
 
 async function refreshRunningState() {
   try {
-    const [local, external] = await Promise.all([
-      api.scanApps(),
-      api.scanExternalApps(externalDir.value),
-    ])
-    // Merge sizes/icons we know locally into the freshly-scanned items so
-    // we don't reset values the size callbacks haven't refreshed yet.
-    const merge = (fresh: AppItemWithIcon[], prev: AppItemWithIcon[]) => {
-      const prevByPath = new Map(prev.map(p => [p.path, p]))
-      return fresh.map(f => {
-        const old = prevByPath.get(f.path)
-        return {
-          ...f,
-          size: f.size || old?.size || 0,
-          icon: f.icon || old?.icon || '',
-        }
-      })
+    // Only refresh the running flag — re-running scan_apps / scan_external_apps
+    // here would clobber size values that compute_app_sizes is still
+    // working on (a 100+ GB bundle can block the serial walk for tens of
+    // seconds, during which a 5-second poll would otherwise pin every
+    // row to "—" until the walk finishes).
+    const running = await api.getRunningApps()
+    const runningSet = new Set(running)
+    const matches = (item: AppItemWithIcon): boolean => {
+      const target = item.symlink_target || item.path
+      if (!target) return false
+      return runningSet.has(target) || runningSet.has(item.path)
     }
-    localApps.value = merge(local, localApps.value)
-    externalApps.value = merge(external, externalApps.value)
+    for (const item of localApps.value) item.is_running = matches(item)
+    for (const item of externalApps.value) item.is_running = matches(item)
   } catch (e) {
     // Silent — transient lsof failure shouldn't disrupt the UI.
   }
