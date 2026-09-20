@@ -77,6 +77,8 @@ export interface AppItem {
   has_backup: boolean
   symlink_target: string
   category: string
+  is_appstore?: boolean
+  is_running?: boolean
 }
 
 export interface ProgressEvent {
@@ -120,7 +122,8 @@ export const api = {
   scanLogs: (): Promise<CleanupItem[]> => invoke('scan_logs'),
   cleanPath: (path: string): Promise<boolean> => invoke('clean_path', { path }),
   scanApps: (): Promise<AppItem[]> => invoke('scan_apps'),
-  computeAppSizes: (paths: string[]): Promise<boolean> => invoke('compute_app_sizes', { paths }),
+  scanExternalApps: (dir: string): Promise<AppItem[]> => invoke('scan_external_apps', { dir }),
+  computeAppSizes: (paths: string[], targets?: string[]): Promise<boolean> => invoke('compute_app_sizes', { paths, targets }),
   getAppIcon: (appPath: string): Promise<string> => invoke('get_app_icon', { appPath }),
 }
 

@@ -104,4 +104,14 @@ pub struct AppItem {
     pub has_backup: bool,
     pub symlink_target: String,
     pub category: String,
+    /// True if this is an App Store app (receipt under Contents/_MASReceipt).
+    /// Migration of App Store apps breaks auto-update.
+    #[serde(default)]
+    pub is_appstore: bool,
+    /// True if the app's main executable is currently running. Detected via
+    /// `lsof -nP | grep '/Contents/MacOS/'`. Migrating a running app would
+    /// either fail or leave the process holding the old inode; UI must
+    /// surface this and block migration.
+    #[serde(default)]
+    pub is_running: bool,
 }
