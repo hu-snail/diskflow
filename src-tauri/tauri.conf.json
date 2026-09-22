@@ -31,7 +31,45 @@
   "plugins": {},
   "bundle": {
     "active": true,
-    "targets": "app",
-    "icon": ["icons/icon.png"]
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Disk space analyzer and migration tool",
+    "longDescription": "DiskFlow helps you reclaim disk space by scanning cache directories, log files, browser data, developer artifacts, downloads, and trash. It can also migrate application data folders to other disks to free up primary storage.",
+    "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+    "resources": [],
+    "externalBin": [],
+    "copyright": "© 2026 DiskFlow Team",
+    "windows": {
+      "wix": { "language": ["zh-CN", "en-US"] },
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "frameworks": [],
+      "providerShortName": null,
+      "entitlements": null,
+      "exceptionDomain": ""
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3"]
+      }
+    }
   }
 }

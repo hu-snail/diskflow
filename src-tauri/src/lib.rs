@@ -30,9 +30,14 @@ pub fn run() {
             system::get_system_info,
             system::start_monitoring,
             system::stop_monitoring,
-            cleanup::scan_cache,
-            cleanup::scan_logs,
+            cleanup::scan_group,
+            cleanup::scan_downloads,
+            cleanup::scan_trash,
+            cleanup::pause_scan,
+            cleanup::resume_scan,
+            cleanup::cancel_scan,
             cleanup::clean_path,
+            cleanup::clean_paths_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DiskFlow");

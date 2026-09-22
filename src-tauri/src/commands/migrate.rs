@@ -166,7 +166,7 @@ pub async fn migrate_app(
     }
 
     // Step 1: Parallel scan (single traversal via jwalk)
-    log(&app, "info", "📊 统计文件中...");
+    log(&app, "info", "统计文件中...");
     let source_clone1 = source.clone();
     let (file_count, source_size, _) = tokio::task::spawn_blocking(move || {
         bfs::scan_dir_stats(&source_clone1)
@@ -174,7 +174,7 @@ pub async fn migrate_app(
     log(&app, "info", &format!("  共 {} 个文件，{}", file_count, fs::format_size(source_size)));
 
     // Step 2: Copy with cp -av (batched per-file progress)
-    log(&app, "info", "📋 复制数据中...");
+    log(&app, "info", "复制数据中...");
     if bfs::path_exists(&target_full) {
         let target_rm = target_full.clone();
         tokio::task::spawn_blocking(move || { let _ = std::fs::remove_dir_all(&target_rm); })
@@ -196,7 +196,7 @@ pub async fn migrate_app(
     match copy_result {
         Ok(Ok(())) => log(&app, "success", "✓ 数据复制完成"),
         Ok(Err(e)) => {
-            log(&app, "error", &format!("❌ 复制失败: {}", e));
+            log(&app, "error", &format!("复制失败: {}", e));
             let _ = std::fs::remove_dir_all(&target_full);
             return Ok(MigrateResult {
                 success: false, source_size, target_size: 0,
@@ -205,7 +205,7 @@ pub async fn migrate_app(
             });
         }
         Err(e) => {
-            log(&app, "error", &format!("❌ 任务异常: {}", e));
+            log(&app, "error", &format!("任务异常: {}", e));
             let _ = std::fs::remove_dir_all(&target_full);
             return Ok(MigrateResult {
                 success: false, source_size, target_size: 0,
@@ -217,7 +217,7 @@ pub async fn migrate_app(
 
     // Step 3: Verification — only scan target (we already have source stats from step 1)
     // This halves the verify cost by reusing pre-computed source data
-    log(&app, "info", "🔍 数据校验中...");
+    log(&app, "info", "数据校验中...");
     let target_clone3 = target_full.clone();
     let (tgt_files, tgt_size, _) = tokio::task::spawn_blocking(move || {
         bfs::scan_dir_stats(&target_clone3)
@@ -259,7 +259,7 @@ pub async fn migrate_app(
     if verify_passed {
         log(&app, "success", "✓ 三重校验全部通过");
     } else {
-        log(&app, "error", "❌ 数据校验失败");
+        log(&app, "error", "数据校验失败");
         let _ = std::fs::remove_dir_all(&target_full);
         return Ok(MigrateResult {
             success: false, source_size, target_size: tgt_size,
@@ -269,12 +269,12 @@ pub async fn migrate_app(
     }
 
     // Step 4: Backup (instant — just a rename)
-    log(&app, "info", "📦 备份原目录...");
+    log(&app, "info", "备份原目录...");
     let backup_path = bfs::get_backup_path(&source);
     match bfs::rename(&source, &backup_path) {
         Ok(_) => log(&app, "success", &format!("✓ 备份完成: {}", backup_path)),
         Err(e) => {
-            log(&app, "error", &format!("❌ 备份失败: {}", e));
+            log(&app, "error", &format!("备份失败: {}", e));
             let _ = std::fs::remove_dir_all(&target_full);
             return Ok(MigrateResult {
                 success: false, source_size, target_size: tgt_size,
@@ -285,11 +285,11 @@ pub async fn migrate_app(
     }
 
     // Step 5: Create symlink (instant)
-    log(&app, "info", "🔗 创建符号链接...");
+    log(&app, "info", "创建符号链接...");
     match bfs::create_symlink(&target_full, &source) {
         Ok(_) => log(&app, "success", "✓ 符号链接创建成功"),
         Err(e) => {
-            log(&app, "error", &format!("❌ 符号链接失败: {}", e));
+            log(&app, "error", &format!("符号链接失败: {}", e));
             let _ = bfs::rename(&backup_path, &source);
             let _ = std::fs::remove_dir_all(&target_full);
             return Ok(MigrateResult {
@@ -300,7 +300,7 @@ pub async fn migrate_app(
         }
     }
 
-    log(&app, "success", &format!("✅ {} 迁移完成!", folder_name));
+    log(&app, "success", &format!("{} 迁移完成!", folder_name));
 
     Ok(MigrateResult {
         success: true,
@@ -345,7 +345,7 @@ pub async fn rollback_app(
     match bfs::rename(&backup_path, &source) {
         Ok(_) => log(&app, "success", "✓ 备份恢复成功"),
         Err(e) => {
-            log(&app, "error", &format!("❌ 恢复失败: {}", e));
+            log(&app, "error", &format!("恢复失败: {}", e));
             if !target.is_empty() {
                 let _ = bfs::create_symlink(&target, &source);
             }
@@ -361,7 +361,7 @@ pub async fn rollback_app(
         });
     }
 
-    log(&app, "success", &format!("✅ {} 回滚完成!", folder_name));
+    log(&app, "success", &format!("{} 回滚完成!", folder_name));
     Ok(true)
 }
 
@@ -417,11 +417,11 @@ pub async fn cleanup_backup(
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
-            log(&app, "success", &format!("✅ 释放 {}", fs::format_size(backup_size)));
+            log(&app, "success", &format!("释放 {}", fs::format_size(backup_size)));
             Ok(true)
         }
         Ok(Ok(out)) => {
-            log(&app, "error", &format!("❌ 删除失败: {}", String::from_utf8_lossy(&out.stderr)));
+            log(&app, "error", &format!("删除失败: {}", String::from_utf8_lossy(&out.stderr)));
             Ok(false)
         }
         _ => Ok(false),

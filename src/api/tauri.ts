@@ -118,9 +118,15 @@ export const api = {
   getSystemInfo: (): Promise<SystemInfo> => invoke('get_system_info'),
   startMonitoring: (): Promise<boolean> => invoke('start_monitoring'),
   stopMonitoring: (): Promise<boolean> => invoke('stop_monitoring'),
-  scanCache: (): Promise<CleanupItem[]> => invoke('scan_cache'),
-  scanLogs: (): Promise<CleanupItem[]> => invoke('scan_logs'),
+  scanGroup: (group?: string, forceRefresh?: boolean): Promise<CleanupItem[]> => invoke('scan_group', { group, forceRefresh }),
+  scanDownloads: (forceRefresh?: boolean, minAgeDays?: number): Promise<CleanupItem[]> => invoke('scan_downloads', { forceRefresh, minAgeDays }),
+  scanTrash: (forceRefresh?: boolean): Promise<CleanupItem[]> => invoke('scan_trash', { forceRefresh }),
+  pauseScan: (category: string): Promise<void> => invoke('pause_scan', { category }),
+  resumeScan: (category: string): Promise<void> => invoke('resume_scan', { category }),
+  cancelScan: (category: string): Promise<void> => invoke('cancel_scan', { category }),
   cleanPath: (path: string): Promise<boolean> => invoke('clean_path', { path }),
+  cleanPathsBatch: (batchId: string, paths: string[]): Promise<CleanResult[]> =>
+    invoke('clean_paths_batch', { batchId, paths }),
   scanApps: (): Promise<AppItem[]> => invoke('scan_apps'),
   scanExternalApps: (dir: string): Promise<AppItem[]> => invoke('scan_external_apps', { dir }),
   getRunningApps: (): Promise<string[]> => invoke('get_running_apps'),
@@ -147,6 +153,50 @@ export interface AppSizeEvent {
 
 export function onAppSize(callback: (e: AppSizeEvent) => void): Promise<UnlistenFn> {
   return listen<AppSizeEvent>('app-size', (event) => callback(event.payload))
+}
+
+export interface CleanupProgressEvent {
+  category: string
+  current: number
+  total: number
+  phase: string
+  elapsed_ms: number
+  paused: boolean
+  cancelled: boolean
+}
+
+export interface CleanupItemEvent {
+  category: string
+  item: CleanupItem
+}
+
+export interface CleanResult {
+  path: string
+  ok: boolean
+  error: string | null
+}
+
+export interface CleanProgressEvent {
+  batch_id: string
+  path: string
+  name: string
+  size: number
+  index: number
+  total: number
+  status: 'running' | 'done' | 'failed'
+  error: string | null
+}
+
+export function onCleanupProgress(callback: (e: CleanupProgressEvent) => void): Promise<UnlistenFn> {
+  return listen<CleanupProgressEvent>('cleanup:progress', (event) => callback(event.payload))
+}
+
+export function onCleanupItem(callback: (e: CleanupItemEvent) => void): Promise<UnlistenFn> {
+  return listen<CleanupItemEvent>('cleanup:item', (event) => callback(event.payload))
+}
+
+export function onCleanupCleanProgress(callback: (e: CleanProgressEvent) => void): Promise<UnlistenFn> {
+  return listen<CleanProgressEvent>('cleanup:clean-progress', (event) => callback(event.payload))
 }
 
 export function formatBytes(bytes: number): string {
