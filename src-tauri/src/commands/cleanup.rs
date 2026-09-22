@@ -29,82 +29,119 @@ const GROUP_BROWSER: &str = "browser";
 const GROUP_TRASH: &str = "trash";
 
 /// `(display_name, abs_path, group)`
-type ScannablePath = (&'static str, &'static str, &'static str);
+///
+/// Paths are owned `String`s (not `&'static`) because they depend on
+/// the runtime `$HOME` — different users have different home dirs. The
+/// previous version hard-coded `/Users/mac/...` which made every pill
+/// except dev (some of which is under `~/Library/...` and similarly
+/// affected) report 0 B on any machine whose username wasn't "mac".
+type ScannablePath = (String, String, &'static str);
 
-const SCAN_PATHS: &[ScannablePath] = &[
-    // ── 开发构建残留 (GROUP_DEV) ─────────────────────────────────────────
-    ("Homebrew 缓存",       "/Users/mac/Library/Caches/Homebrew",                              GROUP_DEV),
-    ("pnpm 缓存",          "/Users/mac/Library/Caches/pnpm",                                  GROUP_DEV),
-    ("Playwright 缓存",     "/Users/mac/Library/Caches/ms-playwright",                          GROUP_DEV),
-    ("Yarn 缓存",          "/Users/mac/Library/Caches/Yarn",                                   GROUP_DEV),
-    ("npm 缓存",           "/Users/mac/.npm",                                                 GROUP_DEV),
-    ("Cargo 缓存",         "/Users/mac/.cargo/registry",                                      GROUP_DEV),
-    ("Docker 缓存",        "/Users/mac/Library/Containers/com.docker.docker/Data/vms/0",      GROUP_DEV),
-    ("velopack 缓存",      "/Users/mac/Library/Caches/velopack",                               GROUP_DEV),
-    ("VS Code 缓存",       "/Users/mac/Library/Application Support/Code/Cache",                GROUP_DEV),
-    ("TRAE 缓存",          "/Users/mac/Library/Application Support/TRAE SOLO CN/ModularData",  GROUP_DEV),
-    ("Gradle 缓存",        "/Users/mac/.gradle/caches",                                       GROUP_DEV),
-    ("Maven 缓存",         "/Users/mac/.m2/repository",                                       GROUP_DEV),
-    ("CocoaPods 缓存",     "/Users/mac/Library/Caches/CocoaPods",                              GROUP_DEV),
-    ("Composer 缓存",      "/Users/mac/.composer/cache",                                      GROUP_DEV),
-    ("PyPI 缓存",          "/Users/mac/Library/Caches/pip",                                   GROUP_DEV),
-    ("Bun 缓存",           "/Users/mac/.bun/install/cache",                                   GROUP_DEV),
-    ("Xcode DerivedData",  "/Users/mac/Library/Developer/Xcode/DerivedData",                   GROUP_DEV),
-    ("Xcode Archives",     "/Users/mac/Library/Developer/Xcode/Archives",                      GROUP_DEV),
-    ("iOS 模拟器数据",      "/Users/mac/Library/Developer/CoreSimulator/Devices",               GROUP_DEV),
-    ("iOS 设备支持",        "/Users/mac/Library/Developer/Xcode/iOS DeviceSupport",            GROUP_DEV),
-    ("watchOS 设备支持",    "/Users/mac/Library/Developer/Xcode/watchOS DeviceSupport",        GROUP_DEV),
-    ("tvOS 设备支持",      "/Users/mac/Library/Developer/Xcode/tvOS DeviceSupport",            GROUP_DEV),
+/// Build the full scan list from `$HOME`. Mac-only: most cache roots
+/// live under `~/Library/Caches` / `~/Library/Application Support` /
+/// `~/.{cargo,gradle,...}`. We resolve `$HOME` once per process.
+fn build_scan_paths() -> Vec<ScannablePath> {
+    let home = home_dir();
+    let lib = format!("{}/Library", home);
+    let lib_cache = format!("{}/Caches", lib);
+    let lib_app_support = format!("{}/Application Support", lib);
+    let lib_developer = format!("{}/Developer", lib);
 
-    // ── 系统与应用 (GROUP_SYSTEM) ─────────────────────────────────────────
-    // Spotify / Telegram / WeChat 等系统级应用的临时缓存、媒体、日志和
-    // 用户下载目录里的旧文件都归到这里。
-    ("系统日志",            "/var/log",                                                        GROUP_SYSTEM),
-    ("用户日志",            "/Users/mac/Library/Logs",                                         GROUP_SYSTEM),
-    ("诊断日志",            "/Library/Logs/DiagnosticReports",                                 GROUP_SYSTEM),
-    ("macOS 临时目录",      "/private/var/folders",                                            GROUP_SYSTEM),
-    ("用户临时目录",         "/tmp",                                                            GROUP_SYSTEM),
-    ("崩溃报告",            "/Users/mac/Library/Logs/DiagnosticReports",                       GROUP_SYSTEM),
-    ("保存的应用状态",       "/Users/mac/Library/Saved Application State",                      GROUP_SYSTEM),
-    ("旧下载文件",          "/Users/mac/Downloads",                                            GROUP_SYSTEM),
+    let mut out: Vec<ScannablePath> = Vec::with_capacity(64);
 
-    // ── 浏览器 (GROUP_BROWSER) ───────────────────────────────────────────
-    // Order matters: parent dirs first so the user's eye sees broad
-    // groups (Chrome, Firefox) before narrow ones (per-profile caches).
-    // Lower-priority entries that don't exist are silently dropped by the
-    // exists() filter — keep them listed for completeness; macOS users
-    // routinely install/remove browsers without touching this code.
-    ("Safari 缓存",         "/Users/mac/Library/Caches/com.apple.Safari",                      GROUP_BROWSER),
-    ("Chrome 缓存",         "/Users/mac/Library/Caches/Google/Chrome",                         GROUP_BROWSER),
-    ("Edge 缓存",           "/Users/mac/Library/Caches/Microsoft Edge",                        GROUP_BROWSER),
-    ("Firefox 缓存",        "/Users/mac/Library/Caches/Firefox",                               GROUP_BROWSER),
-    ("Brave 缓存",          "/Users/mac/Library/Caches/BraveSoftware",                         GROUP_BROWSER),
-    ("Arc 缓存",            "/Users/mac/Library/Caches/company.thebrowser.Browser",            GROUP_BROWSER),
-    // Chromium-derivatives that don't always sit under ~/Library/Caches.
-    // Listed for visibility; silently skipped when absent.
-    ("Chromium 缓存",       "/Users/mac/Library/Caches/Chromium",                              GROUP_BROWSER),
-    ("Vivaldi 缓存",        "/Users/mac/Library/Caches/Vivaldi",                               GROUP_BROWSER),
-    ("Opera 缓存",          "/Users/mac/Library/Caches/Opera Software",                         GROUP_BROWSER),
-    ("Opera GX 缓存",       "/Users/mac/Library/Caches/com.opera.gx",                          GROUP_BROWSER),
-    ("Yandex 缓存",         "/Users/mac/Library/Caches/Yandex",                                GROUP_BROWSER),
-    ("Tor Browser 缓存",    "/Users/mac/Library/Application Support/Comodo/Tormagi/cache",      GROUP_BROWSER),
-    // WebKit shared (Safari stores some cache here too).
-    ("WebKit 共享缓存",      "/Users/mac/Library/Caches/com.apple.WebKit.Networking",           GROUP_BROWSER),
-    ("WebKit 页面缓存",      "/Users/mac/Library/Caches/com.apple.WebKit.WebContent",          GROUP_BROWSER),
+    // ── 开发构建残留 (GROUP_DEV) ───────────────────────────────────────
+    out.push((s("Homebrew 缓存"),         t(&lib_cache, "Homebrew"),                                       GROUP_DEV));
+    out.push((s("pnpm 缓存"),             t(&lib_cache, "pnpm"),                                           GROUP_DEV));
+    out.push((s("Playwright 缓存"),        t(&lib_cache, "ms-playwright"),                                  GROUP_DEV));
+    out.push((s("Yarn 缓存"),             t(&lib_cache, "Yarn"),                                            GROUP_DEV));
+    out.push((s("npm 缓存"),              t(&home, ".npm"),                                                 GROUP_DEV));
+    out.push((s("Cargo 缓存"),            t(&home, ".cargo/registry"),                                     GROUP_DEV));
+    out.push((s("Docker 缓存"),           t(&lib, "Containers/com.docker.docker/Data/vms/0"),              GROUP_DEV));
+    out.push((s("velopack 缓存"),         t(&lib_cache, "velopack"),                                        GROUP_DEV));
+    out.push((s("VS Code 缓存"),          t(&lib_app_support, "Code/Cache"),                               GROUP_DEV));
+    out.push((s("TRAE 缓存"),             t(&lib_app_support, "TRAE SOLO CN/ModularData"),                 GROUP_DEV));
+    out.push((s("Gradle 缓存"),           t(&home, ".gradle/caches"),                                      GROUP_DEV));
+    out.push((s("Maven 缓存"),            t(&home, ".m2/repository"),                                      GROUP_DEV));
+    out.push((s("CocoaPods 缓存"),        t(&lib_cache, "CocoaPods"),                                       GROUP_DEV));
+    out.push((s("Composer 缓存"),         t(&home, ".composer/cache"),                                     GROUP_DEV));
+    out.push((s("PyPI 缓存"),             t(&lib_cache, "pip"),                                            GROUP_DEV));
+    out.push((s("Bun 缓存"),              t(&home, ".bun/install/cache"),                                  GROUP_DEV));
+    out.push((s("Xcode DerivedData"),     t(&lib_developer, "Xcode/DerivedData"),                          GROUP_DEV));
+    out.push((s("Xcode Archives"),        t(&lib_developer, "Xcode/Archives"),                             GROUP_DEV));
+    out.push((s("iOS 模拟器数据"),         t(&lib_developer, "CoreSimulator/Devices"),                      GROUP_DEV));
+    out.push((s("iOS 设备支持"),           t(&lib_developer, "Xcode/iOS DeviceSupport"),                    GROUP_DEV));
+    out.push((s("watchOS 设备支持"),       t(&lib_developer, "Xcode/watchOS DeviceSupport"),                GROUP_DEV));
+    out.push((s("tvOS 设备支持"),         t(&lib_developer, "Xcode/tvOS DeviceSupport"),                   GROUP_DEV));
 
-    // ── 废纸篓 (GROUP_TRASH) ─────────────────────────────────────────────
+    // ── 系统与应用 (GROUP_SYSTEM) ───────────────────────────────────────
+    out.push((s("系统日志"),               s("/var/log"),                                                    GROUP_SYSTEM));
+    out.push((s("用户日志"),               t(&lib, "Logs"),                                                  GROUP_SYSTEM));
+    out.push((s("诊断日志"),               s("/Library/Logs/DiagnosticReports"),                             GROUP_SYSTEM));
+    out.push((s("macOS 临时目录"),         s("/private/var/folders"),                                        GROUP_SYSTEM));
+    out.push((s("用户临时目录"),            s("/tmp"),                                                        GROUP_SYSTEM));
+    out.push((s("崩溃报告"),               t(&lib, "Logs/DiagnosticReports"),                                GROUP_SYSTEM));
+    out.push((s("保存的应用状态"),         t(&lib, "Saved Application State"),                              GROUP_SYSTEM));
+    out.push((s("旧下载文件"),             t(&home, "Downloads"),                                            GROUP_SYSTEM));
+
+    // ── 浏览器 (GROUP_BROWSER) ─────────────────────────────────────────
+    out.push((s("Safari 缓存"),            t(&lib_cache, "com.apple.Safari"),                               GROUP_BROWSER));
+    out.push((s("Chrome 缓存"),            t(&lib_cache, "Google/Chrome"),                                  GROUP_BROWSER));
+    out.push((s("Edge 缓存"),              t(&lib_cache, "Microsoft Edge"),                                 GROUP_BROWSER));
+    out.push((s("Firefox 缓存"),           t(&lib_cache, "Firefox"),                                        GROUP_BROWSER));
+    out.push((s("Brave 缓存"),             t(&lib_cache, "BraveSoftware"),                                  GROUP_BROWSER));
+    out.push((s("Arc 缓存"),               t(&lib_cache, "company.thebrowser.Browser"),                     GROUP_BROWSER));
+    out.push((s("Chromium 缓存"),          t(&lib_cache, "Chromium"),                                       GROUP_BROWSER));
+    out.push((s("Vivaldi 缓存"),           t(&lib_cache, "Vivaldi"),                                        GROUP_BROWSER));
+    out.push((s("Opera 缓存"),             t(&lib_cache, "Opera Software"),                                 GROUP_BROWSER));
+    out.push((s("Opera GX 缓存"),          t(&lib_cache, "com.opera.gx"),                                   GROUP_BROWSER));
+    out.push((s("Yandex 缓存"),            t(&lib_cache, "Yandex"),                                         GROUP_BROWSER));
+    out.push((s("Tor Browser 缓存"),       t(&lib_app_support, "Comodo/Tormagi/cache"),                     GROUP_BROWSER));
+    out.push((s("WebKit 共享缓存"),         t(&lib_cache, "com.apple.WebKit.Networking"),                    GROUP_BROWSER));
+    out.push((s("WebKit 页面缓存"),         t(&lib_cache, "com.apple.WebKit.WebContent"),                    GROUP_BROWSER));
+
+    // ── 废纸篓 (GROUP_TRASH) ───────────────────────────────────────────
     // 注意：废纸篓路径由 scan_trash 单独扫描 (它需要枚举 /Volumes 找外置
     // 磁盘的 .Trashes), 不放进 SCAN_PATHS。
-];
 
-const DOWNLOADS_DIR: &str = "/Users/mac/Downloads";
-const TRASH_DIR: &str = "/Users/mac/.Trash";
+    out
+}
+
+// Tiny helpers to keep build_scan_paths() readable.
+fn s(v: &str) -> String { v.to_string() }
+fn t(base: &str, child: &str) -> String {
+    let mut p = String::with_capacity(base.len() + 1 + child.len());
+    p.push_str(base);
+    if !base.ends_with('/') { p.push('/'); }
+    p.push_str(child);
+    p
+}
+
+/// Resolve `$HOME` once per process. Most paths are rooted under HOME,
+/// so this is the only piece of env the scanner really needs.
+fn home_dir() -> String {
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| String::from("/Users/Shared"))
+}
+
+fn downloads_dir() -> String {
+    let mut p = home_dir();
+    p.push_str("/Downloads");
+    p
+}
+
+fn trash_dir() -> String {
+    let mut p = home_dir();
+    p.push_str("/.Trash");
+    p
+}
 
 // =============================================================================
 // Safety net
 // =============================================================================
 
-const FORBIDDEN_CLEAN_ROOTS: &[&str] = &[
+const FORBIDDEN_CLEAN_ROOTS_SYSTEM: &[&str] = &[
     // Top-level system roots. The exact match (`canonical == "/"` and
     // friends) and any direct child (via `starts_with("/System/")`)
     // are blocked.
@@ -112,7 +149,7 @@ const FORBIDDEN_CLEAN_ROOTS: &[&str] = &[
     // `/Volumes` itself is intentionally NOT in this list: it's a
     // mount-point container, not a single removable directory. Users
     // routinely keep caches on external drives via symlinks, e.g.
-    //   /Users/mac/.gradle -> /Volumes/JZ-miniGo/.../App/工具目录/.gradle
+    //   ~/Users/<u>/.gradle -> /Volumes/JZ-miniGo/.../App/工具目录/.gradle
     // `canonicalize()` on those resolves to `/Volumes/...` which we
     // MUST allow cleaning. The cleanup UI only ever asks for paths
     // returned by `scan_candidates`, never `/Volumes` itself, so
@@ -120,12 +157,39 @@ const FORBIDDEN_CLEAN_ROOTS: &[&str] = &[
     "/Library/Apple", "/Library/Developer/CommandLineTools",
     "/Library/Extensions", "/Library/Frameworks",
     "/Library/PrivilegedHelperTools",
-    "/Users/mac/Library/Keychains", "/Users/mac/.ssh",
-    "/Users/mac/Library/Application Support/Apple",
-    "/Users/mac/Library/Application Support/MobileSync",
-    "/Users/mac/Library/Group Containers",
-    "/Users/mac/Library/Containers/com.apple",
 ];
+
+/// User-relative paths that should never be cleaned regardless of
+/// `$HOME`. Built lazily from `home_dir()` so it follows the running
+/// user. These protect credentials, Apple-managed data, and any
+/// MobileSync backups.
+fn forbidden_user_roots() -> Vec<String> {
+    let h = home_dir();
+    vec![
+        format!("{}/Library/Keychains", h),
+        format!("{}/.ssh", h),
+        format!("{}/Library/Application Support/Apple", h),
+        format!("{}/Library/Application Support/MobileSync", h),
+        format!("{}/Library/Group Containers", h),
+        format!("{}/Library/Containers/com.apple", h),
+    ]
+}
+
+/// Returns true if `canonical` matches a system- or user-protected root.
+/// Resolves user-roots via `home_dir()` on first call and caches them.
+fn is_forbidden(canonical: &str) -> bool {
+    for r in FORBIDDEN_CLEAN_ROOTS_SYSTEM {
+        if canonical == *r || canonical.starts_with(&format!("{}/", r)) {
+            return true;
+        }
+    }
+    for r in forbidden_user_roots() {
+        if canonical == r || canonical.starts_with(&format!("{}/", r)) {
+            return true;
+        }
+    }
+    false
+}
 
 // =============================================================================
 // Scan cache (in-memory, short TTL)
@@ -451,6 +515,47 @@ fn probe_full(path: &Path) -> DirProbe {
     let size = du_sk_bytes(path);
     let count = count_files_recursive(path);
     DirProbe { size, count }
+}
+
+/// Ask Finder for the user's trash size via AppleScript.
+///
+/// Why this exists: macOS SIP makes `~/.Trash` unreadable to non-Finder
+/// processes — `du` reports 0 even when the trash is full of multi-GB
+/// items. `osascript` runs in the user's UI session and can ask Finder
+/// directly, bypassing the SIP gate.
+///
+/// Returns `(size_bytes, item_count)` on success. `None` if Finder is
+/// unavailable (rare) or the script timed out.
+///
+/// Note: this is a *best-effort* measurement. The bytes returned are
+/// what Finder believes the trash occupies, which is what `rm -rf`
+/// will reclaim. We intentionally don't fall through to APFS-only
+/// measurement — that's overkill for a progress-bar UI affordance.
+fn trash_size_via_finder() -> Option<(u64, u64)> {
+    let script = r#"
+        tell application "System Events"
+            try
+                set theBytes to size of trash
+                set theItems to count of items of trash
+                return (theBytes as string) & " " & (theItems as string)
+            on error
+                return ""
+            end try
+        end tell
+    "#;
+    let out = Command::new("osascript")
+        .args(["-e", script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    let s = std::str::from_utf8(&out.stdout).ok()?.trim();
+    if s.is_empty() { return None; }
+    let mut iter = s.split_whitespace();
+    let size: u64 = iter.next()?.parse().ok()?;
+    let count: u64 = iter.next()?.parse().ok()?;
+    Some((size, count))
 }
 
 /// Walk one directory to depth 1 and return per-child-subdir size + count.
@@ -889,8 +994,8 @@ pub async fn scan_group(
         };
 
         if want_dev {
-            let paths: Vec<ScannablePath> = SCAN_PATHS.iter()
-                .copied()
+            let paths: Vec<ScannablePath> = build_scan_paths()
+                .into_iter()
                 .filter(|(_, _, g)| *g == GROUP_DEV)
                 .collect();
             eprintln!("[scan_group] scanning dev: {} paths", paths.len());
@@ -903,8 +1008,8 @@ pub async fn scan_group(
             );
         }
         if want_system {
-            let paths: Vec<ScannablePath> = SCAN_PATHS.iter()
-                .copied()
+            let paths: Vec<ScannablePath> = build_scan_paths()
+                .into_iter()
                 .filter(|(_, _, g)| *g == GROUP_SYSTEM)
                 .collect();
             items.extend(
@@ -916,7 +1021,8 @@ pub async fn scan_group(
             // Augment system group with the dynamic "large log sub-dir"
             // probe — same logic as the old scan_logs.
             if !is_cancelled(group_key) {
-                let log_dir = Path::new("/Users/mac/Library/Logs");
+                let log_dir_str = format!("{}/Library/Logs", home_dir());
+                let log_dir = Path::new(&log_dir_str);
                 if log_dir.exists() {
                     let _ = wait_if_paused(group_key);
                     let sizes = du_depth1_sizes(log_dir).unwrap_or_default();
@@ -941,8 +1047,8 @@ pub async fn scan_group(
             }
         }
         if want_browser {
-            let paths: Vec<ScannablePath> = SCAN_PATHS.iter()
-                .copied()
+            let paths: Vec<ScannablePath> = build_scan_paths()
+                .into_iter()
                 .filter(|(_, _, g)| *g == GROUP_BROWSER)
                 .collect();
             items.extend(
@@ -987,29 +1093,48 @@ fn scan_trash_internal(app: &AppHandle, category: &'static str, cat_label: &str)
 
     let mut items: Vec<CleanupItem> = Vec::new();
 
-    let trash = Path::new(TRASH_DIR);
+    let trash_path = trash_dir();
+    let trash = Path::new(&trash_path);
     if trash.exists() {
+        // Try a direct probe first — works when the trash is empty or
+        // when SIP hasn't revoked read access. `du` returns 0 on the
+        // SIP-blocked path; we still surface that as a row.
         let probe = probe_full(trash);
-        if probe.size > 0 {
+        let mut size = probe.size;
+        let mut count = probe.count;
+        if size == 0 {
+            // SIP often blocks non-Finder processes from reading
+            // ~/.Trash even though the dir exists. Fall back to
+            // `osascript` which asks Finder for the authoritative
+            // trash size — Finder runs as a trusted process.
+            if let Some((finder_size, finder_count)) = trash_size_via_finder() {
+                if finder_size > size {
+                    size = finder_size;
+                }
+                if finder_count > count {
+                    count = finder_count;
+                }
+            }
+        }
+        if size > 0 {
             let item = CleanupItem {
                 name: "用户废纸篓".to_string(),
-                path: TRASH_DIR.to_string(),
-                size: probe.size, file_count: probe.count,
+                path: trash_path.clone(),
+                size, file_count: count,
                 category: cat_label.to_string(),
                 last_modified: None,
             };
             emit_trash_item(app, category, &item);
             items.push(item);
         } else {
-            // The directory exists but is unreadable (typical for
-            // ~/.Trash on macOS — SIP blocks non-Finder processes even
-            // for the owning user). Surface a "扫描受限" row so the
-            // pill stops showing 0 B and the user knows something is
-            // there but can't be measured from this app. Clicking it
-            // would normally launch Finder.
+            // Genuinely empty OR Finder also couldn't read it. Push
+            // a 0-byte row so the pill shows "0 B" instead of looking
+            // broken — the user knows the scanner ran. A dedicated
+            // progress event also explains the limitation in the
+            // scanning card.
             let item = CleanupItem {
                 name: "用户废纸篓".to_string(),
-                path: TRASH_DIR.to_string(),
+                path: trash_path.clone(),
                 size: 0, file_count: 0,
                 category: cat_label.to_string(),
                 last_modified: None,
@@ -1023,7 +1148,7 @@ fn scan_trash_internal(app: &AppHandle, category: &'static str, cat_label: &str)
                 category: category.to_string(),
                 current: 0,
                 total: 0,
-                phase: "用户废纸篓: 权限受限, 请在 Finder 中查看".to_string(),
+                phase: "用户废纸篓: 权限受限或为空, 请在 Finder 中查看".to_string(),
                 elapsed_ms: 0,
                 paused: false,
                 cancelled: false,
@@ -1131,9 +1256,10 @@ pub async fn scan_downloads(
     }
     let app_clone = app.clone();
     let min_age = min_age_days.unwrap_or(30);
+    let downloads_path = downloads_dir();
     let result = tokio::task::spawn_blocking(move || {
         begin_scan("downloads");
-        let downloads = Path::new(DOWNLOADS_DIR);
+        let downloads = Path::new(&downloads_path);
         if !downloads.exists() {
             emit_progress(&app_clone, "downloads", 1, 1, "~/Downloads 不存在");
             return Vec::new();
@@ -1146,7 +1272,7 @@ pub async fn scan_downloads(
             .unwrap_or(0);
 
         let find_out = Command::new("find")
-            .args([DOWNLOADS_DIR, "-maxdepth", "1", "-mindepth", "1", "-type", "f"])
+            .args([downloads_path.as_str(), "-maxdepth", "1", "-mindepth", "1", "-type", "f"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output();
@@ -1208,10 +1334,8 @@ pub async fn clean_path(
         .to_string_lossy()
         .into_owned();
 
-    for forbidden in FORBIDDEN_CLEAN_ROOTS {
-        if canonical == *forbidden || canonical.starts_with(&format!("{}/", forbidden)) {
-            return Err(format!("禁止清理系统目录: {}", forbidden));
-        }
+    if is_forbidden(&canonical) {
+        return Err(format!("禁止清理系统目录: {}", canonical));
     }
 
     if canonical.contains(".app/Contents/")
@@ -1287,14 +1411,25 @@ pub async fn clean_paths_batch(
     app: AppHandle,
     batch_id: String,
     paths: Vec<String>,
+    sizes: Option<Vec<u64>>,
 ) -> Result<Vec<CleanResult>, String> {
     let total = paths.len();
     let app_arc: std::sync::Arc<AppHandle> = std::sync::Arc::new(app);
     let batch_id_arc: std::sync::Arc<String> = std::sync::Arc::new(batch_id);
 
+    // Frontend passes the per-item size alongside each path so the
+    // progress events can carry real bytes (instead of always 0) — and
+    // so we can emit a final `cleanup:clean-finished` event with the
+    // authoritative freed-bytes total even if the frontend's in-memory
+    // totals drift. If the frontend doesn't supply sizes, fall back to
+    // 0 and let the UI fall back to its own accumulator.
+    let size_for = |i: usize| -> u64 {
+        sizes.as_ref()
+            .and_then(|v| v.get(i).copied())
+            .unwrap_or(0)
+    };
+
     // Build the work items with display name + size pre-computed.
-    // (We don't have size here — frontend already knows it. The frontend
-    // can pair its own items by path.)
     let paths_owned: Vec<String> = paths;
     let items: Vec<(usize, String, String)> = paths_owned.iter().cloned().enumerate()
         .map(|(i, p)| {
@@ -1325,35 +1460,38 @@ pub async fn clean_paths_batch(
     // paths live on separate spindles — for now, sequential keeps the
     // UI progress smooth and predictable.
     let mut results: Vec<CleanResult> = Vec::with_capacity(total);
+    // Tracks the cumulative bytes we believe were freed by successful
+    // `rm`s. Reported at the end of the batch via a dedicated event so
+    // the UI can show "已释放 X" without doing its own book-keeping
+    // (which would drift if events were dropped or batch_ids mismatched).
+    let mut freed_bytes: u64 = 0;
     for (i, path, name) in items {
         let path_str = path; // Owned String — clone what we need before moving into closures.
-        emit("running", i, &path_str, &name, 0, None);
+        let item_size = size_for(i);
+        emit("running", i, &path_str, &name, item_size, None);
 
         let path_obj = Path::new(&path_str);
         if !path_obj.exists() {
-            emit("done", i, &path_str, &name, 0, None);
+            emit("done", i, &path_str, &name, item_size, None);
             results.push(CleanResult { path: path_str, ok: true, error: None });
             continue;
         }
 
         // Run the same safety checks as clean_path. We don't want the
-        // batch path to bypass the FORBIDDEN_CLEAN_ROOTS guard.
+        // batch path to bypass the forbidden-roots guard.
         let canonical = match std::fs::canonicalize(path_obj) {
             Ok(c) => c.to_string_lossy().into_owned(),
             Err(e) => {
                 let msg = format!("路径无效: {}", e);
-                emit("failed", i, &path_str, &name, 0, Some(msg.clone()));
+                emit("failed", i, &path_str, &name, item_size, Some(msg.clone()));
                 results.push(CleanResult { path: path_str, ok: false, error: Some(msg) });
                 continue;
             }
         };
 
         let mut blocked = None;
-        for forbidden in FORBIDDEN_CLEAN_ROOTS {
-            if canonical == *forbidden || canonical.starts_with(&format!("{}/", forbidden)) {
-                blocked = Some(format!("禁止清理系统目录: {}", forbidden));
-                break;
-            }
+        if is_forbidden(&canonical) {
+            blocked = Some(format!("禁止清理系统目录: {}", canonical));
         }
         if canonical.contains(".app/Contents/")
             || canonical.contains(".app/Contents/MacOS/")
@@ -1365,7 +1503,7 @@ pub async fn clean_paths_batch(
             blocked = Some("禁止直接清理应用包".to_string());
         }
         if let Some(msg) = blocked {
-            emit("failed", i, &path_str, &name, 0, Some(msg.clone()));
+            emit("failed", i, &path_str, &name, item_size, Some(msg.clone()));
             results.push(CleanResult { path: path_str, ok: false, error: Some(msg) });
             continue;
         }
@@ -1385,11 +1523,12 @@ pub async fn clean_paths_batch(
 
         match rm_out {
             Ok(Ok(out)) if out.status.success() => {
+                freed_bytes = freed_bytes.saturating_add(item_size);
                 let _ = app_for_event.emit("cleanup:clean-progress", CleanProgressEvent {
                     batch_id: batch_id_for_event.as_str().to_string(),
                     path: path_for_event,
                     name: name_for_log,
-                    size: 0,
+                    size: item_size,
                     index: i_for_event,
                     total: total_usize,
                     status: "done".to_string(),
@@ -1408,7 +1547,7 @@ pub async fn clean_paths_batch(
                     batch_id: batch_id_for_event.as_str().to_string(),
                     path: path_for_event,
                     name: name_for_log,
-                    size: 0,
+                    size: item_size,
                     index: i_for_event,
                     total: total_usize,
                     status: "failed".to_string(),
@@ -1418,7 +1557,29 @@ pub async fn clean_paths_batch(
             }
         }
     }
+
+    // Final event with the authoritative freed-bytes total. The frontend
+    // can use this to show "已释放 X" and refresh disk info — even if its
+    // own per-event accumulators missed a tick.
+    let _ = app_arc.emit("cleanup:clean-finished", CleanFinishedEvent {
+        batch_id: batch_id_arc.as_str().to_string(),
+        freed_bytes,
+        success_count: results.iter().filter(|r| r.ok).count() as u64,
+        failed_count:  results.iter().filter(|r| !r.ok).count() as u64,
+    });
+
     Ok(results)
+}
+
+#[derive(Clone, Serialize)]
+pub struct CleanFinishedEvent {
+    batch_id: String,
+    /// Authoritative total bytes freed across successful `rm`s in this
+    /// batch. The frontend should use this for the "已释放 X" toast and
+    /// to decide whether to refresh the disk-info panel.
+    freed_bytes: u64,
+    success_count: u64,
+    failed_count: u64,
 }
 
 #[derive(Clone, Serialize)]

@@ -125,8 +125,8 @@ export const api = {
   resumeScan: (category: string): Promise<void> => invoke('resume_scan', { category }),
   cancelScan: (category: string): Promise<void> => invoke('cancel_scan', { category }),
   cleanPath: (path: string): Promise<boolean> => invoke('clean_path', { path }),
-  cleanPathsBatch: (batchId: string, paths: string[]): Promise<CleanResult[]> =>
-    invoke('clean_paths_batch', { batchId, paths }),
+  cleanPathsBatch: (batchId: string, paths: string[], sizes?: number[]): Promise<CleanResult[]> =>
+    invoke('clean_paths_batch', { batchId, paths, sizes }),
   scanApps: (): Promise<AppItem[]> => invoke('scan_apps'),
   scanExternalApps: (dir: string): Promise<AppItem[]> => invoke('scan_external_apps', { dir }),
   getRunningApps: (): Promise<string[]> => invoke('get_running_apps'),
@@ -187,6 +187,17 @@ export interface CleanProgressEvent {
   error: string | null
 }
 
+/// Final summary emitted at the end of a `clean_paths_batch` call.
+/// Carries the authoritative freed-bytes total so the UI doesn't have
+/// to re-accumulate from per-item events (which could drift if any
+/// tick was dropped or batch_id was mismatched).
+export interface CleanFinishedEvent {
+  batch_id: string
+  freed_bytes: number
+  success_count: number
+  failed_count: number
+}
+
 export function onCleanupProgress(callback: (e: CleanupProgressEvent) => void): Promise<UnlistenFn> {
   return listen<CleanupProgressEvent>('cleanup:progress', (event) => callback(event.payload))
 }
@@ -197,6 +208,10 @@ export function onCleanupItem(callback: (e: CleanupItemEvent) => void): Promise<
 
 export function onCleanupCleanProgress(callback: (e: CleanProgressEvent) => void): Promise<UnlistenFn> {
   return listen<CleanProgressEvent>('cleanup:clean-progress', (event) => callback(event.payload))
+}
+
+export function onCleanupCleanFinished(callback: (e: CleanFinishedEvent) => void): Promise<UnlistenFn> {
+  return listen<CleanFinishedEvent>('cleanup:clean-finished', (event) => callback(event.payload))
 }
 
 export function formatBytes(bytes: number): string {

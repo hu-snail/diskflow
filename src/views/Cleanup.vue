@@ -50,7 +50,9 @@
           <div class="progress-top">
             <div class="progress-status">
               <span class="progress-title">实时深度扫描进行中</span>
-              <span class="progress-speed">速度 {{ formatNumber(scanSpeed) }} 文件/秒</span>
+              <span class="progress-speed">
+                速度 {{ formatNumber(scanSpeed) }} 文件/秒 · {{ scanThroughput }}
+              </span>
             </div>
             <div class="progress-percent">{{ scanPercent }}<small>%</small></div>
           </div>
@@ -62,7 +64,7 @@
             <div class="progress-bar-fill" :style="{ width: scanPercent + '%' }"></div>
           </div>
           <div class="progress-footer">
-            <span>已分析 {{ formatNumber(scanCurrent) }} 个文件</span>
+            <span>已分析 {{ formatNumber(scanFilesDone) }} 个文件 · {{ formatBytes(scanBytesDone) }}</span>
             <span v-if="etaText">剩余 ~{{ etaText }}</span>
           </div>
         </div>
@@ -93,7 +95,11 @@
             <div class="progress-bar-fill progress-bar-fill-clean" :style="{ width: cleanPercent + '%' }"></div>
           </div>
           <div class="progress-footer">
-            <span>已处理 {{ cleanDone + cleanFailed }} / {{ cleanTotal }}</span>
+            <span>
+              已处理 {{ formatBytes(cleanBytesDone) }}
+              <template v-if="cleanBytesTotal > 0">/ {{ formatBytes(cleanBytesTotal) }}</template>
+              <template v-else>{{ cleanDone + cleanFailed }} / {{ cleanTotal }}</template>
+            </span>
             <span v-if="cleanEtaText">剩余 ~{{ cleanEtaText }}</span>
           </div>
           <!-- Per-item event log. Auto-sticks to the bottom so the
@@ -188,8 +194,8 @@ import {
 } from '@vicons/ionicons5'
 import {
   api, formatBytes,
-  onCleanupProgress, onCleanupItem, onCleanupCleanProgress,
-  type CleanupItem, type CleanupProgressEvent, type CleanProgressEvent,
+  onCleanupProgress, onCleanupItem, onCleanupCleanProgress, onCleanupCleanFinished,
+  type CleanupItem, type CleanupProgressEvent, type CleanProgressEvent, type CleanFinishedEvent,
 } from '../api/tauri'
 
 // ── Group (pill) definitions ────────────────────────────────────────────
@@ -243,6 +249,12 @@ const descriptionMap: Record<string, string> = {
 
 // ── Reactive state ─────────────────────────────────────────────────────
 
+// Emits `refresh-disks` to the parent (App.vue) after a successful
+// cleanup batch so the sidebar disk cards re-fetch `available_space`.
+// Without this the disk numbers stay stale after the user clicks
+// "立即清理" and they think nothing was freed.
+const emit = defineEmits<{ (e: 'refresh-disks'): void }>()
+
 const activePill = ref<PillKey>('all')
 const items = ref<CleanupItem[]>([])
 const scanning = ref(false)
@@ -257,6 +269,13 @@ const currentPhase = ref('准备扫描…')
 const currentItem  = ref('')
 const scanCurrent  = ref(0)
 const scanTotal    = ref(0)
+// Total files scanned across all items received so far. Used for the
+// "X 文件/秒" speed readout: per-candidate ticks aren't a fair speed
+// proxy (a 90 GB Gradle cache is one item but millions of files).
+const scanFilesDone = ref(0)
+const scanFilesTotal = ref(0)
+const scanBytesDone = ref(0)
+const scanBytesTotal = ref(0)
 const scanPercent  = computed(() => {
   if (scanTotal.value <= 0) return 0
   return Math.min(100, Math.round((scanCurrent.value / scanTotal.value) * 100))
@@ -286,6 +305,15 @@ const cleanFailed     = ref(0)
 const cleanInFlight   = ref(0)
 const cleanCurrentPath = ref('')
 const cleanStartedAt  = ref(0)
+/// Bytes that the items in the current batch represent on disk
+/// (sum of `size` from each CleanupItem). Used to drive a byte-based
+/// progress bar — a 90 GB Gradle cache should fill the bar faster than
+/// five 10 MB Chromium caches, otherwise the UI lies about progress.
+const cleanBytesTotal = ref(0)
+const cleanBytesDone  = ref(0)
+/// Authoritative freed-bytes total from the backend's `cleanup:clean-finished`
+/// event. Used for the success toast and disk-info refresh.
+const cleanFreedBytes = ref(0)
 /// Per-event log lines for the cleanup progress card. Each
 /// `cleanup:clean-progress` event appends one entry — surfaced in the
 /// card so the user sees what's happening to each item instead of
@@ -301,6 +329,14 @@ watch(() => cleanLog.value.length, async () => {
 })
 
 const cleanPercent = computed(() => {
+  // Byte-based weighting: a 90 GB Gradle cache should fill the bar
+  // dramatically faster than five 10 MB Chromium caches, otherwise the
+  // UI lies about progress. Fall back to count-based when bytes are
+  // unknown (rare — only when the backend didn't supply sizes).
+  if (cleanBytesTotal.value > 0) {
+    const pct = (cleanBytesDone.value / cleanBytesTotal.value) * 100
+    return Math.min(100, Math.round(pct))
+  }
   if (cleanTotal.value <= 0) return 0
   // Treat each in-flight item as half a unit of progress so the bar
   // moves the moment the first item is dispatched. With only one item
@@ -332,11 +368,28 @@ const etaText = computed(() => {
   return `${(remaining / 1000).toFixed(1)}s`
 })
 
-// Files/sec = scanCurrent / elapsed_seconds. Used in the progress card.
+// Files/sec based on the cumulative file_count across streamed items.
+// Falls back to candidate-count when no item has reported a file_count
+// yet (rare — only during the very first second of a scan before any
+// `du`/`walk` finishes).
 const scanSpeed = computed(() => {
   const elapsedSec = (nowTick.value - scanStartedAt.value) / 1000
   if (elapsedSec <= 0.1) return 0
+  if (scanFilesDone.value > 0) {
+    return Math.round(scanFilesDone.value / elapsedSec)
+  }
   return Math.round(scanCurrent.value / elapsedSec)
+})
+
+// Throughput in MB/s — more useful than files/sec for cache scans
+// where most of the time is spent walking a few huge dirs. Shown in
+// the speed line alongside the file count.
+const scanThroughput = computed(() => {
+  const elapsedSec = (nowTick.value - scanStartedAt.value) / 1000
+  if (elapsedSec <= 0.1) return ''
+  const bps = scanBytesDone.value / elapsedSec
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`
+  return `${(bps / 1024 / 1024).toFixed(1)} MB/s`
 })
 
 // ── Computed aggregates for the header & pills ──────────────────────────
@@ -434,6 +487,10 @@ async function runScan(key: PillKey, force: boolean) {
   cancelled.value   = false
   scanCurrent.value = 0
   scanTotal.value   = 0
+  scanFilesDone.value = 0
+  scanFilesTotal.value = 0
+  scanBytesDone.value = 0
+  scanBytesTotal.value = 0
   currentItem.value = ''
   items.value = []
   currentPhase.value = `准备扫描 · ${pills.find(p => p.key === key)?.label ?? key}`
@@ -476,8 +533,16 @@ async function runScan(key: PillKey, force: boolean) {
     // down is dropped.
     const seen = new Set(items.value.map(it => it.path))
     for (const it of result) {
-      if (!seen.has(it.path)) items.value.push(it)
+      if (!seen.has(it.path)) {
+        items.value.push(it)
+        scanFilesDone.value += (it.file_count ?? 0)
+        scanBytesDone.value += it.size
+      }
     }
+    // Surface the totals in the footer once they're known — these are
+    // the most accurate "X 文件 / Y GB" numbers the user will see.
+    scanFilesTotal.value = items.value.reduce((s, it) => s + (it.file_count ?? 0), 0)
+    scanBytesTotal.value = items.value.reduce((s, it) => s + it.size, 0)
     items.value = [...items.value].sort((a, b) => b.size - a.size)
     // eslint-disable-next-line no-console
     console.debug(`[cleanup] scanGroup("${key}") returned ${result.length} items`)
@@ -553,11 +618,21 @@ async function cleanPaths(targets: CleanupItem[]) {
   cleanLog.value = []
   cleanCurrentPath.value = targets[0].name
   cleanStartedAt.value = Date.now()
+  cleanBytesTotal.value = targets.reduce((s, t) => s + t.size, 0)
+  cleanBytesDone.value = 0
+  cleanFreedBytes.value = 0
   startNowTimer()
 
   let results: Awaited<ReturnType<typeof api.cleanPathsBatch>>
   try {
-    results = await api.cleanPathsBatch(batchId, targets.map(t => t.path))
+    // Pass sizes parallel to paths so the backend can emit real byte
+    // counts in its events AND compute the authoritative `freed_bytes`
+    // total without trusting per-event UI accumulators.
+    results = await api.cleanPathsBatch(
+      batchId,
+      targets.map(t => t.path),
+      targets.map(t => t.size),
+    )
   } catch (e) {
     message.error(`清理失败: ${e}`)
     cleaning.value = false
@@ -577,11 +652,30 @@ async function cleanPaths(targets: CleanupItem[]) {
   if (c) cache.value[activePill.value] = c.filter(i => !successSet.has(i.path))
   for (const k of Object.keys(checked.value)) delete checked.value[k]
 
+  // Authoritative freed-bytes total comes from the backend's
+  // `cleanup:clean-finished` event (cleanFreedBytes), populated by the
+  // listener installed in onMounted. Fall back to summing the items
+  // here if the event arrived before the listener was ready (rare).
+  const freed = cleanFreedBytes.value > 0
+    ? cleanFreedBytes.value
+    : targets.filter(t => successSet.has(t.path)).reduce((s, t) => s + t.size, 0)
+
   if (fail === 0) {
-    message.success(`已清理 ${successSet.size} 项`)
+    message.success(`已清理 ${successSet.size} 项 · 释放 ${formatBytes(freed)}`)
   } else {
     const firstErr = failedItems.find(r => r.error)?.error ?? '未知原因'
-    message.warning(`清理完成: 成功 ${successSet.size}，失败 ${fail}（首个失败原因: ${firstErr}）`)
+    message.warning(
+      `清理完成: 成功 ${successSet.size}，失败 ${fail} · 释放 ${formatBytes(freed)}（首个失败: ${firstErr}）`
+    )
+  }
+
+  // After freeing non-trivial space, ask the parent (App.vue) to
+  // refresh its disk list so the sidebar/disk cards show the new
+  // available_space. The disks won't auto-update otherwise — and the
+  // user noticed "no space released" precisely because the disk
+  // numbers stayed stale.
+  if (freed > 0) {
+    emit('refresh-disks')
   }
 
   cleaning.value = false
@@ -607,9 +701,18 @@ function toggleAll() {
 let unlistenProgress: (() => void) | null = null
 let unlistenItem: (() => void) | null = null
 let unlistenClean: (() => void) | null = null
+let unlistenCleanFinished: (() => void) | null = null
 const message = useMessage()
 
 onMounted(async () => {
+  // Authoritative summary from the backend. We update `cleanFreedBytes`
+  // here so `cleanPaths()` can show "已释放 X" in the toast without
+  // re-summing the items (which would risk drift if any tick was dropped).
+  unlistenCleanFinished = await onCleanupCleanFinished((e: CleanFinishedEvent) => {
+    if (e.batch_id !== cleanBatchId.value) return
+    cleanFreedBytes.value = e.freed_bytes
+  })
+
   unlistenClean = await onCleanupCleanProgress((e: CleanProgressEvent) => {
     // Stale events from a previous batch? Drop them. The backend tags
     // each batch with the id the frontend generated at kickoff, so we
@@ -631,6 +734,11 @@ onMounted(async () => {
     if (e.status === 'done') {
       cleanDone.value += 1
       cleanInFlight.value = Math.max(0, cleanInFlight.value - 1)
+      // Credit the bytes this item represents as "done". `e.size` is
+      // the actual on-disk size from the scan, not 0 — this drives the
+      // byte-based progress bar so a 90 GB cache fills the bar much
+      // faster than five 10 MB caches.
+      cleanBytesDone.value += e.size
       cleanLog.value = [...cleanLog.value, {
         time: stamp, status: 'done', name: e.name, error: null,
       }]
@@ -667,6 +775,11 @@ onMounted(async () => {
   unlistenItem = await onCleanupItem((e) => {
     if (e.category !== `group:${activePill.value}`) return
     if (items.value.some(it => it.path === e.item.path)) return
+    // Accumulate the per-item file count + bytes so the speed/ETA readouts
+    // are based on real numbers (the per-candidate scanTotal is only the
+    // number of *paths*, not files).
+    scanFilesDone.value += (e.item.file_count ?? 0)
+    scanBytesDone.value += e.item.size
     items.value = [...items.value, e.item].sort((a, b) => b.size - a.size)
   })
 
@@ -680,6 +793,7 @@ onBeforeUnmount(() => {
   if (unlistenProgress) unlistenProgress()
   if (unlistenItem) unlistenItem()
   if (unlistenClean) unlistenClean()
+  if (unlistenCleanFinished) unlistenCleanFinished()
 })
 </script>
 
